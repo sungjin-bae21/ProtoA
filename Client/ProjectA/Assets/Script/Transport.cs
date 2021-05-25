@@ -1,4 +1,5 @@
 using System;
+using System.Collections;
 using System.Text;
 using System.Net.Sockets;
 using System.Threading.Tasks;
@@ -13,12 +14,16 @@ public enum Protocol
 }
 
 
+// 데이터는 다음과 같이 들어온다..
+// "\n\n{message_size}{bytes data}"
 public class TcpTransport
 {
 	public static readonly int BUFFER_SIZE = 1024;
+	public static int HEADER_SIZE = 6;
 
-	byte[] buffer;
-	StringBuilder string_builder;
+
+	Byte[] buffer;
+	int read_offset;
 	Socket socket;
 
 	ConnectHandler connect_handler;
@@ -43,8 +48,8 @@ public class TcpTransport
 		message_handler = message_handler_;
 		disconnect_handler = disconnect_handler_;
 
-		buffer = new byte[BUFFER_SIZE];
-		string_builder = new StringBuilder();
+		read_offset = 0;
+		buffer = new Byte[BUFFER_SIZE];
 		socket = new Socket(AddressFamily.InterNetwork,
 					        SocketType.Stream,
 					        ProtocolType.Tcp);
@@ -89,8 +94,9 @@ public class TcpTransport
 			return;
 		}
 
+		transport.connect_handler(Protocol.TCP);
 		socket.BeginReceive(transport.buffer,
-							0,  // offset
+							transport.read_offset,  // offset
 							BUFFER_SIZE,
 							0,  // socket flag (Specifies socket send and receive behaviors.)
 							new AsyncCallback(ReadCallback),
@@ -104,7 +110,7 @@ public class TcpTransport
 		TcpTransport transport = (TcpTransport)result_.AsyncState;
 		Socket socket = transport.socket;
 		SocketError error;
-		int lenght = socket.EndReceive(result_, out error);
+		int read_bytes = socket.EndReceive(result_, out error);
 		if (error != SocketError.Success)
         {
 			transport.disconnect_handler(Protocol.TCP);
@@ -112,19 +118,12 @@ public class TcpTransport
         }
 
 		String data = String.Empty;
-		if (lenght > 0)
+		if (read_bytes > 0)
 		{
-			transport.string_builder.Append(
-				Encoding.UTF8.GetString(transport.buffer, 0, lenght));
-
-			Debug.Log("recv data ");
-			// 추후 개선필요.
-			data = transport.string_builder.ToString();
-			Debug.Log(data);
-			if (data.IndexOf("<EOF>") > -1)
-			{
-				transport.message_handler(data, Protocol.TCP);
-			}
+			transport.read_offset += read_bytes;
+			// 복잡도를 줄이기 위해 데이터가 들어오는 순간 헤더와 바디를 같이 파싱하도록 한다.
+			// 매번 헤더를 파싱 하지만 큰 문제가 없을거라 판단.
+			ParseMessage(transport, read_bytes);
 		}
 
 		socket.BeginReceive(transport.buffer,
@@ -136,11 +135,93 @@ public class TcpTransport
 	}
 
 
+	static bool ParseMessage(TcpTransport transport_, int read_bytes_)
+    {
+		transport_.read_offset += read_bytes_;
+		if (transport_.read_offset < HEADER_SIZE)
+		{
+			return false;
+		}
+
+		int body_size = 0;
+		if (!ParseMessageHeader(transport_.buffer, out body_size))
+        {
+			return false;
+        }
+
+		// 메세지를 다 받지 못한 상태.
+		if (transport_.read_offset < body_size + HEADER_SIZE)
+        {
+			return false;
+        }
+
+		string msg_str;
+		if (!ParseMessageBody(transport_.buffer, body_size, out msg_str))
+        {
+			DropMessage(transport_, body_size);
+			return false;
+		}
+
+		// 받은 메세지를 protobuf 로 만든다.
+		DropMessage(transport_, body_size);
+		return true; ;
+	}
+
+
+	static bool ParseMessageHeader(byte[] data_, out int body_size_)
+    {
+		if (data_[0] == '\n' && data_[1] == '\n')
+        {
+			body_size_ = BitConverter.ToInt32(data_, 3);
+			return true;
+        }
+
+		body_size_ = -1; 
+		return false;
+    }
+
+
+	static bool ParseMessageBody(byte[] data_, int body_size_, out string msg_str)
+    {
+		try
+		{
+			msg_str = Encoding.UTF8.GetString(data_, 6, body_size_);
+			return true;
+		}
+		catch (Exception e)
+        {
+			// 문서 참조.
+			// 1. The byte array contains invalid Unicode code points.
+			// 2. A fallback occurred
+			msg_str = "";
+			Debug.Log(e.Message);
+		}
+		
+		return false;
+    }
+
+	static void DropMessage(TcpTransport transport_, int body_size) 
+    {
+		if (transport_.read_offset == body_size + HEADER_SIZE)
+        {
+			transport_.buffer = new byte[BUFFER_SIZE];
+			return;
+		}
+
+		// 남아있는 데이터를 유지.
+		Byte[] copy = transport_.buffer;
+		transport_.buffer = new byte[BUFFER_SIZE];
+		Buffer.BlockCopy(copy,
+						 body_size + HEADER_SIZE - 1,  //src offset
+						 transport_.buffer,
+						 0,  // dst offset
+						 transport_.read_offset - body_size + HEADER_SIZE - 1);
+	}
+
+
 	public void SendMessage(String message_)
     {
 		byte[] data = Encoding.UTF8.GetBytes(message_);
-
-		// Begin sending the data to the remote device.  
 		socket.BeginSend(data,
 			             0,  // offset
                          data.Length,
