@@ -1,0 +1,9 @@
+syntax = "proto2";
+
+package Message;
+
+message ProjectA_Msg {
+  required bytes session_id = 1;
+  required string message_type = 2;
+  extensions 8 to max;
+}

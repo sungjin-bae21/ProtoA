@@ -1,0 +1,15 @@
+syntax = "proto2";
+
+package Message;
+
+import "project_msg.proto";
+
+
+message ChatMsg {
+  required string msg = 1;  
+}
+
+
+extend ProjectA_Msg {
+  optional ChatMsg chat_msg = 8;
+}
