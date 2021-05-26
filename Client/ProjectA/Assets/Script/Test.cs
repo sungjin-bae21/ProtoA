@@ -1,5 +1,6 @@
 using System.Collections;
 using System.Collections.Generic;
+using System.Text;
 using UnityEngine;
 
 public class Test : MonoBehaviour
@@ -23,7 +24,12 @@ public class Test : MonoBehaviour
     {
         if (Input.GetKeyDown(KeyCode.A))
         {
-            session.SendMessage("Test data", Protocol.TCP);
+            Message.ChatMsg chat_msg = new Message.ChatMsg();
+            chat_msg.msg = "Test data";
+            Message.ProjectA_Msg msg =
+                ProtoBuf.Serializer.ChangeType<Message.ChatMsg, Message.ProjectA_Msg>(chat_msg);
+            msg.message_type = "chat_msg";
+            session.SendMessage(msg, Protocol.TCP);
         }
     }
 
@@ -40,9 +46,16 @@ public class Test : MonoBehaviour
     }
 
 
-    void OnMessage(string message ,Protocol protocol_)
+    void OnMessage(Message.ProjectA_Msg message_ ,Protocol protocol_)
     {
-        Debug.Log(message);
+
+        if (message_.message_type == "chat_msg")
+        {
+            Message.ChatMsg chat_msg =
+                ProtoBuf.Serializer.ChangeType<Message.ProjectA_Msg, Message.ChatMsg>(message_);
+            Debug.Log(chat_msg.msg);
+        }
+        
     }
 
     void OnDisConnect(Protocol protocol_)

@@ -3,7 +3,7 @@ using UnityEngine;
 
 public delegate void ConnectHandler(Protocol protocol);
 public delegate void ConnectFailHandler(Protocol protocol);
-public delegate void MessageHandler(string message, Protocol protocol);
+public delegate void MessageHandler(Message.ProjectA_Msg message, Protocol protocol);
 public delegate void DisconnectHandler(Protocol protocol);
 
 
@@ -74,7 +74,7 @@ public class Session
     }
 
 
-    void OnMessage(string message, Protocol protocol_)
+    void OnMessage(Message.ProjectA_Msg message, Protocol protocol_)
     {
         if (message_handler == null)
         {
@@ -96,7 +96,7 @@ public class Session
     }
 
 
-    public bool SendMessage(string message_, Protocol protocol_)
+    public bool SendMessage(Message.ProjectA_Msg message_, Protocol protocol_)
     {
         if (protocol_ == Protocol.TCP)
         {

@@ -155,15 +155,17 @@ public class TcpTransport
 			return false;
         }
 
-		string msg_str;
-		if (!ParseMessageBody(transport_.buffer, body_size, out msg_str))
+
+		Message.ProjectA_Msg msg;
+		if (!ParseMessageBody(transport_.buffer, body_size, out msg))
         {
-			DropMessage(transport_, body_size);
+			DropData(transport_, body_size);
 			return false;
 		}
 
-		// 받은 메세지를 protobuf 로 만든다.
-		DropMessage(transport_, body_size);
+		// 이후 데이터는 메세지 핸들러에서 처리한다.
+		transport_.message_handler(msg, Protocol.TCP);
+		DropData(transport_, body_size);
 		return true; ;
 	}
 
@@ -172,7 +174,15 @@ public class TcpTransport
     {
 		if (data_[0] == '\n' && data_[1] == '\n')
         {
-			body_size_ = BitConverter.ToInt32(data_, 3);
+			byte[] temp = new byte[4];
+			Buffer.BlockCopy(data_, 2, temp, 0, 4);
+
+			if (!BitConverter.IsLittleEndian)
+            {
+				Array.Reverse(temp);
+			}
+
+			body_size_ = BitConverter.ToInt32(temp, 0);
 			return true;
         }
 
@@ -181,26 +191,20 @@ public class TcpTransport
     }
 
 
-	static bool ParseMessageBody(byte[] data_, int body_size_, out string msg_str)
+	static bool ParseMessageBody(byte[] data_, int body_size_, out Message.ProjectA_Msg msg_)
     {
-		try
-		{
-			msg_str = Encoding.UTF8.GetString(data_, 6, body_size_);
-			return true;
-		}
-		catch (Exception e)
-        {
-			// 문서 참조.
-			// 1. The byte array contains invalid Unicode code points.
-			// 2. A fallback occurred
-			msg_str = "";
-			Debug.Log(e.Message);
-		}
-		
-		return false;
+		System.IO.MemoryStream memory_stream =
+			new System.IO.MemoryStream(data_,
+									   HEADER_SIZE,  // start idx
+                                       body_size_,
+									   true,  // CanWrite property
+									   true); // true to enable GetBuffer
+		msg_ = ProtoBuf.Serializer.Deserialize<Message.ProjectA_Msg>(memory_stream);
+		return true;
     }
 
-	static void DropMessage(TcpTransport transport_, int body_size) 
+
+	static void DropData(TcpTransport transport_, int body_size) 
     {
 		if (transport_.read_offset == body_size + HEADER_SIZE)
         {
@@ -212,22 +216,43 @@ public class TcpTransport
 		Byte[] copy = transport_.buffer;
 		transport_.buffer = new byte[BUFFER_SIZE];
 		Buffer.BlockCopy(copy,
-						 body_size + HEADER_SIZE - 1,  //src offset
+						 body_size + HEADER_SIZE,  //src offset
 						 transport_.buffer,
 						 0,  // dst offset
-						 transport_.read_offset - body_size + HEADER_SIZE - 1);
+						 transport_.read_offset - body_size + HEADER_SIZE);
 	}
 
 
-	public void SendMessage(String message_)
+	public void SendMessage(Message.ProjectA_Msg msg_)
     {
-		byte[] data = Encoding.UTF8.GetBytes(message_);
+		System.IO.MemoryStream memory_stream = new System.IO.MemoryStream();
+		ProtoBuf.Serializer.Serialize<Message.ProjectA_Msg>(memory_stream, msg_);
+		byte[] data = AddHeader(memory_stream.ToArray());
 		socket.BeginSend(data,
 			             0,  // offset
                          data.Length,
 						 0,  // socket flag (Specifies socket send and receive behaviors.)
 						 new AsyncCallback(SendCallback),
 						 this);
+	}
+
+
+	public byte[] AddHeader(byte[] data_)
+    {
+		// return data
+		byte[] rtv = new byte[data_.Length + HEADER_SIZE];
+
+		Buffer.BlockCopy(data_, 0, rtv, HEADER_SIZE, data_.Length);
+		rtv[0] = Convert.ToByte('\n');
+		rtv[1] = rtv[0];
+		byte[] length_data = BitConverter.GetBytes(data_.Length);
+		if (!BitConverter.IsLittleEndian)
+        {
+			Array.Reverse(length_data);
+		}
+
+		Buffer.BlockCopy(length_data, 0, rtv, 2, length_data.Length);
+		return rtv;
 	}
 
 	
